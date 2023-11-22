@@ -65,9 +65,21 @@ func CRC16Constant(data []byte, length int) uint16 {
 	return u16CRC
 }
 
-func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
+func sendBlock(c io.ReadWriter, block uint8, data []byte, onek bool) error {
+	var packetPayloadLen int
+	if onek {
+		packetPayloadLen = LONG_PACKET_PAYLOAD_LEN
+	} else {
+		packetPayloadLen = SHORT_PACKET_PAYLOAD_LEN
+	}
 	//send STX
-	if _, err := c.Write([]byte{STX}); err != nil {
+	start := make([]byte, 1)
+	if onek {
+		start[0] = STX
+	} else {
+		start[0] = SOH
+	}
+	if _, err := c.Write(start); err != nil {
 		return err
 	}
 	if _, err := c.Write([]byte{block}); err != nil {
@@ -80,7 +92,7 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	//send data
 	var toSend bytes.Buffer
 	toSend.Write(data)
-	for toSend.Len() < LONG_PACKET_PAYLOAD_LEN {
+	for toSend.Len() < packetPayloadLen {
 		toSend.Write([]byte{EOT})
 	}
 
@@ -94,7 +106,7 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	}
 
 	//calc CRC
-	u16CRC := CRC16Constant(data, LONG_PACKET_PAYLOAD_LEN)
+	u16CRC := CRC16Constant(data, packetPayloadLen)
 
 	//send CRC
 	if _, err := c.Write([]byte{uint8(u16CRC >> 8)}); err != nil {
@@ -107,26 +119,33 @@ func sendBlock(c io.ReadWriter, block uint8, data []byte) error {
 	return nil
 }
 
-func ModemSend(c io.ReadWriter, data []byte) error {
+func ModemSend(c io.ReadWriter, data []byte, onek bool) error {
 	oBuffer := make([]byte, 1)
+
+	var packetPayloadLen int
+	if onek {
+		packetPayloadLen = LONG_PACKET_PAYLOAD_LEN
+	} else {
+		packetPayloadLen = SHORT_PACKET_PAYLOAD_LEN
+	}
 
 	if _, err := c.Read(oBuffer); err != nil {
 		return err
 	}
 
 	if oBuffer[0] == POLL {
-		var blocks uint8 = uint8(len(data) / LONG_PACKET_PAYLOAD_LEN)
-		if len(data) > int(int(blocks)*int(LONG_PACKET_PAYLOAD_LEN)) {
+		var blocks int = len(data) / packetPayloadLen
+		if len(data) > blocks*packetPayloadLen {
 			blocks++
 		}
 
 		failed := 0
-		var currentBlock uint8 = 0
+		var currentBlock int = 0
 		for currentBlock < blocks && failed < 10 {
-			if int(int(currentBlock+1)*int(LONG_PACKET_PAYLOAD_LEN)) > len(data) {
-				sendBlock(c, currentBlock+1, data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):])
+			if (currentBlock+1)*packetPayloadLen > len(data) {
+				sendBlock(c, uint8(currentBlock+1), data[currentBlock*packetPayloadLen:], onek)
 			} else {
-				sendBlock(c, currentBlock+1, data[int(currentBlock)*int(LONG_PACKET_PAYLOAD_LEN):(int(currentBlock)+1)*int(LONG_PACKET_PAYLOAD_LEN)])
+				sendBlock(c, uint8(currentBlock+1), data[currentBlock*packetPayloadLen:(currentBlock+1)*packetPayloadLen], onek)
 			}
 
 			if _, err := c.Read(oBuffer); err != nil {
@@ -181,10 +200,8 @@ func ModemReceive(c io.ReadWriter) ([]byte, error) {
 		switch pType {
 		case SOH:
 			packetSize = SHORT_PACKET_PAYLOAD_LEN
-			break
 		case STX:
 			packetSize = LONG_PACKET_PAYLOAD_LEN
-			break
 		}
 
 		if _, err := c.Read(oBuffer); err != nil {
