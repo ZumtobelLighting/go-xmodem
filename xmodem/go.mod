@@ -1,4 +1,4 @@
-module github.com/digitallumens/go-xmodem/xmodem
+module github.com/ZumtobelLighting/go-xmodem/xmodem
 
 go 1.19
 
